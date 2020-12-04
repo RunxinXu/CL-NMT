@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader
 import sentencepiece as spm
 import torch
 import torch.nn as nn
+import numpy as np
 
 class NMTDataset(Dataset):
     def __init__(self, src_path, trg_path, src_spm_path, trg_spm_path, threshold=5): 
@@ -63,19 +64,41 @@ class NMTDataset(Dataset):
         return self.data[idx]
 
 def collate_fn(batch):
-
+    PAD = 0
+    BOS = 1
+    EOS = 2
+    
     src = [torch.LongTensor(sample['src_ids']) for sample in batch]
-    trg = [torch.LongTensor(sample['trg_ids']) for sample in batch]
+    
+    trg = [torch.LongTensor([BOS] + sample['trg_ids']) for sample in batch]
+    trg_y = [torch.LongTensor(sample['trg_ids'] + [EOS]) for sample in batch]
 
-    src = nn.utils.rnn.pad_sequence(src, batch_first=True, padding_value=0)
-    trg = nn.utils.rnn.pad_sequence(trg, batch_first=True, padding_value=0)
-
+    src = nn.utils.rnn.pad_sequence(src, batch_first=True, padding_value=PAD)
+    trg = nn.utils.rnn.pad_sequence(trg, batch_first=True, padding_value=PAD)
+    trg_y = nn.utils.rnn.pad_sequence(trg_y, batch_first=True, padding_value=PAD)
+    
+    src_mask = (src != PAD).bool()
+    trg_mask = (trg != PAD).bool().unsqueeze(-2)
+    trg_mask = trg_mask & subsequent_mask(trg.size(-1)).type_as(trg_mask.data)
+    
     data = {
         'src': src,
         'trg': trg,
+        'trg_y': trg_y,
+        'src_mask': src_mask,
+        'trg_mask': trg_mask
     }
+    
+    print(data)
+    input()
 
     return data
+
+def subsequent_mask(size):
+    "Mask out subsequent positions."
+    attn_shape = (1, size, size)
+    subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
+    return torch.from_numpy(subsequent_mask) == 0
 
 if __name__ == '__main__':
     dataset = NMTDataset('../data/train.en', '../data/train.zh', '../spm_model/en.model', '../spm_model/zh.model')
