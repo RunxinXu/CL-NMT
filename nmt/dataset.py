@@ -4,6 +4,7 @@ import sentencepiece as spm
 import torch
 import torch.nn as nn
 import numpy as np
+from tqdm import tqdm
 
 class NMTDataset(Dataset):
     def __init__(self, src_path, trg_path, src_spm_path, trg_spm_path, threshold=5): 
@@ -13,14 +14,8 @@ class NMTDataset(Dataset):
         self.trg_sp.load(trg_spm_path)
         
         # vocabulary
-        src_vocabs = [self.src_sp.id_to_piece(id) for id in range(self.src_sp.get_piece_size())]
-        trg_vocabs = [self.trg_sp.id_to_piece(id) for id in range(self.trg_sp.get_piece_size())]
-        self.src_vocabs = self.vocab_filter(src_path, self.src_sp, src_vocabs, threshold)
-        self.trg_vocabs = self.vocab_filter(trg_path, self.trg_sp, trg_vocabs, threshold)
-        self.src_sp.set_vocabulary(self.src_vocabs)
-        self.trg_sp.set_vocabulary(self.trg_vocabs)
-        self.src_vocabs_size = len(self.src_vocabs)
-        self.trg_vocabs_size = len(self.trg_vocabs)
+        self.src_vocabs_size = self.src_sp.get_piece_size()
+        self.trg_vocabs_size = self.trg_sp.get_piece_size()
         
         # load data
         self.data = self.load_data(src_path, trg_path)
@@ -30,27 +25,15 @@ class NMTDataset(Dataset):
         self.bos_id = self.src_sp.bos_id() # 1
         self.eos_id = self.src_sp.eos_id() # 2
         self.unk_id = self.src_sp.unk_id() # 3
-        
-    def vocab_filter(self, text_path, sp, vocabs, threshold=0):
-        freq = {}
-        with open(text_path, 'r') as f:
-            for line in f:
-                line = line.rstrip()
-                for piece in sp.encode_as_pieces(line):
-                    freq.setdefault(piece, 0)
-                    freq[piece] += 1
-        new_vocabs = list(filter(lambda x : x in freq and freq[x] > threshold, vocabs))
-        return new_vocabs
     
     def load_data(self, src_path, trg_path):
         data = []
         with open(src_path) as f, \
             open(trg_path) as g:
-                for (src, trg) in zip(f, g):
-                    src, trg = src.strip(), trg.strip()
+                for (src, trg) in tqdm(zip(f, g)):
                     src = self.src_sp.encode_as_ids(src)
                     trg = self.trg_sp.encode_as_ids(trg)
-
+                    
                     data.append({
                         'src_ids': src,
                         'trg_ids': trg
@@ -77,7 +60,7 @@ def collate_fn(batch):
     trg = nn.utils.rnn.pad_sequence(trg, batch_first=True, padding_value=PAD)
     trg_y = nn.utils.rnn.pad_sequence(trg_y, batch_first=True, padding_value=PAD)
     
-    src_mask = (src != PAD).bool()
+    src_mask = (src != PAD).bool().unsqueeze(1)
     trg_mask = (trg != PAD).bool().unsqueeze(-2)
     trg_mask = trg_mask & subsequent_mask(trg.size(-1)).type_as(trg_mask.data)
     

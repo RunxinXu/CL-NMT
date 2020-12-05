@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 import copy
 import math
+import torch.nn.functional as F
 
 # Refers to: https://nlp.seas.harvard.edu/2018/04/03/attention.html
 # But we add cache mechanism in Transformer Decoder => TODO
@@ -168,6 +169,9 @@ class MultiHeadedAttention(nn.Module):
         
     def forward(self, query, key, value, mask=None):
         "Implements Figure 2"
+        # src_mask: bsz * 1 * src_seq_len
+        # trg_mask: bsz * trg_seq_len * src_seq_len
+        # src_mask中间维度可以是1的原因是每个位置的mask是一样的
         if mask is not None:
             # Same mask applied to all h heads.
             mask = mask.unsqueeze(1)
