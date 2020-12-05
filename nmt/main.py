@@ -52,13 +52,13 @@ def train(train_dataloader, model, args, writer):
     global_step = 0
     for epoch in range(args.epochs):
         for batch in tqdm(train_dataloader):
-            src = batch['src'] # bsz * src_seq_len
-            trg = batch['trg'] # bsz * trg_seq_len
-            src_mask = batch['src_mask']
-            trg_mask = batch['trg_mask']
+            src = batch['src'].cuda() # bsz * src_seq_len
+            trg = batch['trg'].cuda() # bsz * trg_seq_len
+            src_mask = batch['src_mask'].cuda()
+            trg_mask = batch['trg_mask'].cuda()
             bsz, trg_len = trg.size()
             output = model(src, trg, src_mask, trg_mask) # bsz * trg_seq_len * vocab
-            label = batch['trg_y'] # bsz * trg_seq_len
+            label = batch['trg_y'].cuda() # bsz * trg_seq_len
             loss = criterion(output.view(bsz*trg_len, -1), label.view(-1))
             writer.add_scalar('Train/Loss', loss.item(), global_step)
             optimizer.zero_grad()
