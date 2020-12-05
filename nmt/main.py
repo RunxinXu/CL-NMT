@@ -73,7 +73,7 @@ if __name__ == '__main__':
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
     model = make_model(src_vocab=dataset.src_vocabs_size, tgt_vocab=dataset.trg_vocabs_size, N=args.layers, 
                d_model=args.d_model, d_ff=args.d_ff, h=args.heads, dropout=args.dropout)
-    model = model
+    model = model.cuda()
     print('total #parameters: {}'.format(sum(p.numel() for p in model.parameters())))
     
     writer = SummaryWriter(args.output_dir)
