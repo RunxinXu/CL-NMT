@@ -88,9 +88,6 @@ def collate_fn(batch):
         'src_mask': src_mask,
         'trg_mask': trg_mask
     }
-    
-    print(data)
-    input()
 
     return data
 

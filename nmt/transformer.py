@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import copy
+import math
 
 # Refers to: https://nlp.seas.harvard.edu/2018/04/03/attention.html
 # But we add cache mechanism in Transformer Decoder => TODO
@@ -59,8 +60,8 @@ class EncoderDecoder(nn.Module):
         
     def forward(self, src, tgt, src_mask, tgt_mask):
         "Take in and process masked src and target sequences."
-        return self.decode(self.encode(src, src_mask), src_mask,
-                            tgt, tgt_mask)
+        return self.generator(self.decode(self.encode(src, src_mask), src_mask,
+                            tgt, tgt_mask))
     
     def encode(self, src, src_mask):
         # src: bsz * seq_len 
@@ -70,7 +71,7 @@ class EncoderDecoder(nn.Module):
     def decode(self, memory, src_mask, tgt, tgt_mask):
         # memory: bsz * src_seq_len * d_model
         # src_mask: bsz * src_seq_len
-        # tgt: bsz * tgt_seq_len * d_model
+        # tgt: bsz * tgt_seq_len
         # tgt_mask: bsz * tgt_seq_len
         return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask)
 
@@ -115,7 +116,7 @@ class SublayerConnection(nn.Module):
     """
     def __init__(self, size, dropout):
         super(SublayerConnection, self).__init__()
-        self.norm = LayerNorm(size)
+        self.norm = nn.LayerNorm(size)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, sublayer):
@@ -200,7 +201,7 @@ class PositionwiseFeedForward(nn.Module):
 class Embeddings(nn.Module):
     def __init__(self, d_model, vocab):
         super(Embeddings, self).__init__()
-        self.lut = nn.Embedding(vocab, d_model, padding=0)
+        self.lut = nn.Embedding(vocab, d_model, padding_idx=0)
         self.d_model = d_model
 
     def forward(self, x):
