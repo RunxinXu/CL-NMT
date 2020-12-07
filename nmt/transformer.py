@@ -4,6 +4,7 @@ from torch.autograd import Variable
 import copy
 import math
 import torch.nn.functional as F
+from dataset import subsequent_mask
 
 # Refers to: https://nlp.seas.harvard.edu/2018/04/03/attention.html
 # But we add cache mechanism in Transformer Decoder => TODO
@@ -75,7 +76,40 @@ class EncoderDecoder(nn.Module):
         # tgt: bsz * tgt_seq_len
         # tgt_mask: bsz * tgt_seq_len
         return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask)
-
+    
+    def greedy_decode(self, src, src_mask, max_decode_length=256):
+        # for inference
+        BOS, EOS = 1, 2
+        bsz, src_seq_len = src.size()
+        results = [[] for _ in range(bsz)] # 放着的是token_ids
+        exit_flag = [False for _ in range(bsz)]
+        finish_count = 0
+        
+        memory = self.encoder(self.src_embed(src), src_mask)
+        trg = memory.new_full(size=(bsz, 1), fill_value=BOS, dtype=torch.long)
+        trg_input = self.tgt_embed(trg)
+        
+        for step in range(max_decode_length):
+            tgt_mask = subsequent_mask(trg_input.size(1)).expand(bsz, -1, -1).cuda()
+            output = self.decoder(trg_input, memory, src_mask, tgt_mask)[:, -1, :] # bsz * dim
+            logits = self.generator(output) # bsz * vocab
+            prediction = torch.argmax(logits, dim=-1) # bsz
+            new_trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
+            trg_input = torch.cat((trg_input, new_trg_input), dim=1)
+            prediction = prediction.cpu().numpy()
+            for i in range(bsz):
+                if not exit_flag[i]:
+                    if prediction[i] == EOS:
+                        finish_count += 1
+                        exit_flag[i] = True
+                    else:
+                        results[i].append(prediction[i].item())
+            
+            if finish_count == bsz:
+                break
+        
+        return results
+                
 class Generator(nn.Module):
     "Define standard linear + softmax generation step."
     def __init__(self, d_model, vocab):

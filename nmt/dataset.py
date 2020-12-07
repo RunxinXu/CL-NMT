@@ -7,11 +7,11 @@ import numpy as np
 from tqdm import tqdm
 
 class NMTDataset(Dataset):
-    def __init__(self, src_path, trg_path, src_spm_path, trg_spm_path, threshold=5): 
-        self.src_sp = spm.SentencePieceProcessor()
-        self.src_sp.load(src_spm_path)
-        self.trg_sp = spm.SentencePieceProcessor()
-        self.trg_sp.load(trg_spm_path)
+    def __init__(self, src_path, trg_path, src_sp, trg_sp, max_src_len=128, max_trg_len=256, threshold=5): 
+        self.src_sp = src_sp
+        self.trg_sp = trg_sp
+        self.max_src_len = max_src_len
+        self.max_trg_len = max_trg_len
         
         # vocabulary
         self.src_vocabs_size = self.src_sp.get_piece_size()
@@ -31,13 +31,16 @@ class NMTDataset(Dataset):
         with open(src_path) as f, \
             open(trg_path) as g:
                 for (src, trg) in tqdm(zip(f, g)):
-                    src = self.src_sp.encode_as_ids(src)
-                    trg = self.trg_sp.encode_as_ids(trg)
+                    src_ids = self.src_sp.encode_as_ids(src)[:self.max_src_len]
+                    trg_ids = self.trg_sp.encode_as_ids(trg)[:self.max_trg_len]
                     
                     data.append({
-                        'src_ids': src,
-                        'trg_ids': trg
+                        'src_ids': src_ids,
+                        'trg_ids': trg_ids,
+                        'raw_src': src, # string
+                        'raw_trg': trg # string
                     })
+                    
         return data
         
     def __len__(self):
@@ -64,12 +67,17 @@ def collate_fn(batch):
     trg_mask = (trg != PAD).bool().unsqueeze(-2)
     trg_mask = trg_mask & subsequent_mask(trg.size(-1)).type_as(trg_mask.data)
     
+    raw_src = [sample['raw_src'] for sample in batch]
+    raw_trg = [sample['raw_trg'] for sample in batch]
+    
     data = {
         'src': src,
         'trg': trg,
         'trg_y': trg_y,
         'src_mask': src_mask,
-        'trg_mask': trg_mask
+        'trg_mask': trg_mask,
+        'raw_src': raw_src,
+        'raw_trg': raw_trg
     }
 
     return data
