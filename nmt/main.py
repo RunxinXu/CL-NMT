@@ -81,8 +81,6 @@ def test(test_dataloader, model, args, trg_sp):
             raw_trg = batch['raw_trg']
             decode_results = model.greedy_decode(src, src_mask)
             decode_results = [trg_sp.decode_ids(x) for x in decode_results]
-            
-            print(decode_results)
             #TODO: calculate bleu
     
             
