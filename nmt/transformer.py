@@ -88,14 +88,36 @@ class EncoderDecoder(nn.Module):
         memory = self.encoder(self.src_embed(src), src_mask)
         trg = memory.new_full(size=(bsz, 1), fill_value=BOS, dtype=torch.long)
         trg_input = self.tgt_embed(trg)
+        cache_dict = {}
+        for i in range(len(self.decoder.layers)):
+            cache_dict['layer_{}_key'.format(i)] = []
+            cache_dict['layer_{}_value'.format(i)] = []
         
+#         for step in range(max_decode_length):
+#             tgt_mask = subsequent_mask(trg_input.size(1)).expand(bsz, -1, -1).cuda()
+#             output = self.decoder(trg_input, memory, src_mask, tgt_mask)[:, -1, :] # bsz * dim
+#             logits = self.generator(output) # bsz * vocab
+#             prediction = torch.argmax(logits, dim=-1) # bsz
+#             new_trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
+#             trg_input = torch.cat((trg_input, new_trg_input), dim=1)
+#             prediction = prediction.cpu().numpy()
+#             for i in range(bsz):
+#                 if not exit_flag[i]:
+#                     if prediction[i] == EOS:
+#                         finish_count += 1
+#                         exit_flag[i] = True
+#                     else:
+#                         results[i].append(prediction[i].item())
+            
+#             if finish_count == bsz:
+#                 break
         for step in range(max_decode_length):
-            tgt_mask = subsequent_mask(trg_input.size(1)).expand(bsz, -1, -1).cuda()
-            output = self.decoder(trg_input, memory, src_mask, tgt_mask)[:, -1, :] # bsz * dim
+            # bsz * dim
+            output, cache_dict = self.decoder(trg_input, memory, src_mask, tgt_mask=None, cache_dict=cache_dict)
+            output = output[:, 0, :] 
             logits = self.generator(output) # bsz * vocab
             prediction = torch.argmax(logits, dim=-1) # bsz
-            new_trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
-            trg_input = torch.cat((trg_input, new_trg_input), dim=1)
+            trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
             prediction = prediction.cpu().numpy()
             for i in range(bsz):
                 if not exit_flag[i]:
@@ -107,7 +129,7 @@ class EncoderDecoder(nn.Module):
             
             if finish_count == bsz:
                 break
-        
+                
         return results
                 
 class Generator(nn.Module):
@@ -139,10 +161,17 @@ class Decoder(nn.Module):
         self.layers = clones(layer, N)
         self.norm = nn.LayerNorm(layer.size)
         
-    def forward(self, x, memory, src_mask, tgt_mask):
-        for layer in self.layers:
-            x = layer(x, memory, src_mask, tgt_mask)
-        return self.norm(x)
+    def forward(self, x, memory, src_mask, tgt_mask, cache_dict=None):
+        if cache_dict is None:
+            for i, layer in enumerate(self.layers):
+                x = layer(x, memory, src_mask, tgt_mask)
+            return self.norm(x)
+        else:
+            for i, layer in enumerate(self.layers):
+                x, cache_key, cache_value = layer(x, memory, src_mask, tgt_mask, cache_dict['layer_{}_key'.format(i)], cache_dict['layer_{}_value'.format(i)])
+                cache_dict['layer_{}_key'.format(i)] = cache_key
+                cache_dict['layer_{}_value'.format(i)] = cache_value
+            return self.norm(x), cache_dict
 
 class SublayerConnection(nn.Module):
     """
@@ -182,13 +211,26 @@ class DecoderLayer(nn.Module):
         self.feed_forward = feed_forward
         self.sublayer = clones(SublayerConnection(size, dropout), 3)
  
-    def forward(self, x, memory, src_mask, tgt_mask):
-        m = memory
-        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask))
-        x = self.sublayer[1](x, lambda x: self.src_attn(x, m, m, src_mask))
-        return self.sublayer[2](x, self.feed_forward)
+    def forward(self, x, memory, src_mask, tgt_mask, cache_key=None, cache_value=None):
+        if cache_key is None:
+            m = memory
+            x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask))
+            x = self.sublayer[1](x, lambda x: self.src_attn(x, m, m, src_mask))
+            return self.sublayer[2](x, self.feed_forward)
+        else:
+            m = memory
+            new_key = self.self_attn.linears[1](x)
+            new_value = self.self_attn.linears[2](x)
+            if cache_key != []:
+                cache_key = torch.cat((cache_key, new_key), dim=1)
+                cache_value = torch.cat((cache_value, new_value), dim=1)
+            else:
+                cache_key = new_key
+                cache_value = new_value
+            x = self.sublayer[0](x, lambda x: self.self_attn.cache_forward(x, cache_key, cache_value))
+            x = self.sublayer[1](x, lambda x: self.src_attn(x, m, m, src_mask))
+            return self.sublayer[2](x, self.feed_forward), cache_key, cache_value
     
-
 class MultiHeadedAttention(nn.Module):
     def __init__(self, h, d_model, dropout=0.1):
         "Take in model size and number of heads."
@@ -215,6 +257,32 @@ class MultiHeadedAttention(nn.Module):
         query, key, value = \
             [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
              for l, x in zip(self.linears, (query, key, value))]
+        
+        # 2) Apply attention on all the projected vectors in batch. 
+        x, self.attn = attention(query, key, value, mask=mask, 
+                                 dropout=self.dropout)
+        
+        # 3) "Concat" using a view and apply a final linear. 
+        x = x.transpose(1, 2).contiguous() \
+             .view(nbatches, -1, self.h * self.d_k)
+        return self.linears[-1](x)
+    
+    def cache_forward(self, query, cache_key, cache_value, mask=None):
+        "Implements Figure 2"
+        # src_mask: bsz * 1 * src_seq_len
+        # trg_mask: bsz * trg_seq_len * src_seq_len
+        # src_mask中间维度可以是1的原因是每个位置的mask是一样的
+        if mask is not None:
+            # Same mask applied to all h heads.
+            mask = mask.unsqueeze(1)
+        nbatches = query.size(0)
+        
+        new_query = self.linears[0](query)
+        
+        # 1) Do all the linear projections in batch from d_model => h x d_k 
+        query = new_query.view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
+        key = cache_key.view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
+        value = cache_value.view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
         
         # 2) Apply attention on all the projected vectors in batch. 
         x, self.attn = attention(query, key, value, mask=mask, 

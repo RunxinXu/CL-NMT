@@ -37,13 +37,13 @@ def get_argparse():
                         help="Batch size" )
     
     # model
-    parser.add_argument("--layers", default=6, type=int,
+    parser.add_argument("--layers", default=4, type=int,
                         help="encoder & decoder layers")
-    parser.add_argument("--d_model", default=512, type=int,
+    parser.add_argument("--d_model", default=256, type=int,
                         help="d_model")
-    parser.add_argument("--d_ff", default=2048, type=int,
+    parser.add_argument("--d_ff", default=512, type=int,
                         help="d_ff")
-    parser.add_argument("--heads", default=8, type=int,
+    parser.add_argument("--heads", default=4, type=int,
                         help="heads")
     parser.add_argument("--dropout", default=0.1, type=float,
                         help="dropout")
@@ -150,6 +150,7 @@ if __name__ == '__main__':
     train_dataset = NMTDataset(os.path.join(args.data, 'train.en'), os.path.join(args.data, 'train.zh'), src_sp, trg_sp)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
     dev_dataset = NMTDataset(os.path.join(args.data, 'dev.en'), os.path.join(args.data, 'dev.zh'), src_sp, trg_sp)
+    dev_dataset.data = dev_dataset.data[:3000]
     dev_dataloader = DataLoader(dev_dataset, batch_size=args.test_batch_size, shuffle=False, collate_fn=collate_fn)
     test_dataset = NMTDataset(os.path.join(args.data, 'test.en'), os.path.join(args.data, 'test.zh'), src_sp, trg_sp)
     test_dataloader = DataLoader(test_dataset, batch_size=args.test_batch_size, shuffle=False, collate_fn=collate_fn)
