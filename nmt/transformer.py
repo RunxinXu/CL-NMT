@@ -32,17 +32,18 @@ def make_model(src_vocab, tgt_vocab, N=6,
     attn = MultiHeadedAttention(h, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
+    src_embedding = Embeddings(d_model, src_vocab)
+    trg_embedding = Embeddings(d_model, tgt_vocab)
     model = EncoderDecoder(
         Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
         Decoder(DecoderLayer(d_model, c(attn), c(attn), 
                              c(ff), dropout), N),
-        nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
-        nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
-        Generator(d_model, tgt_vocab))
-    
+        nn.Sequential(src_embedding, c(position)),
+        nn.Sequential(trg_embedding, c(position)),
+        Generator(d_model, tgt_vocab, weight=trg_embedding.lut.weight))
     # This was important from their code. 
     # Initialize parameters with Glorot / fan_avg.
-    for p in model.parameters():
+    for name, p in model.named_parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform(p)
     return model
@@ -93,31 +94,13 @@ class EncoderDecoder(nn.Module):
             cache_dict['layer_{}_key'.format(i)] = []
             cache_dict['layer_{}_value'.format(i)] = []
         
-#         for step in range(max_decode_length):
-#             tgt_mask = subsequent_mask(trg_input.size(1)).expand(bsz, -1, -1).cuda()
-#             output = self.decoder(trg_input, memory, src_mask, tgt_mask)[:, -1, :] # bsz * dim
-#             logits = self.generator(output) # bsz * vocab
-#             prediction = torch.argmax(logits, dim=-1) # bsz
-#             new_trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
-#             trg_input = torch.cat((trg_input, new_trg_input), dim=1)
-#             prediction = prediction.cpu().numpy()
-#             for i in range(bsz):
-#                 if not exit_flag[i]:
-#                     if prediction[i] == EOS:
-#                         finish_count += 1
-#                         exit_flag[i] = True
-#                     else:
-#                         results[i].append(prediction[i].item())
-            
-#             if finish_count == bsz:
-#                 break
         for step in range(max_decode_length):
-            # bsz * dim
-            output, cache_dict = self.decoder(trg_input, memory, src_mask, tgt_mask=None, cache_dict=cache_dict)
-            output = output[:, 0, :] 
+            tgt_mask = subsequent_mask(trg_input.size(1)).expand(bsz, -1, -1).cuda()
+            output = self.decoder(trg_input, memory, src_mask, tgt_mask)[:, -1, :] # bsz * dim
             logits = self.generator(output) # bsz * vocab
             prediction = torch.argmax(logits, dim=-1) # bsz
-            trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
+            new_trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
+            trg_input = torch.cat((trg_input, new_trg_input), dim=1)
             prediction = prediction.cpu().numpy()
             for i in range(bsz):
                 if not exit_flag[i]:
@@ -129,14 +112,34 @@ class EncoderDecoder(nn.Module):
             
             if finish_count == bsz:
                 break
+#         for step in range(max_decode_length):
+#             # bsz * dim
+#             output, cache_dict = self.decoder(trg_input, memory, src_mask, tgt_mask=None, cache_dict=cache_dict)
+#             output = output[:, 0, :] 
+#             logits = self.generator(output) # bsz * vocab
+#             prediction = torch.argmax(logits, dim=-1) # bsz
+#             trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
+#             prediction = prediction.cpu().numpy()
+#             for i in range(bsz):
+#                 if not exit_flag[i]:
+#                     if prediction[i] == EOS:
+#                         finish_count += 1
+#                         exit_flag[i] = True
+#                     else:
+#                         results[i].append(prediction[i].item())
+            
+#             if finish_count == bsz:
+#                 break
                 
         return results
                 
 class Generator(nn.Module):
     "Define standard linear + softmax generation step."
-    def __init__(self, d_model, vocab):
+    def __init__(self, d_model, vocab, weight=None):
         super(Generator, self).__init__()
         self.proj = nn.Linear(d_model, vocab)
+        if weight is not None:
+            self.proj.weight = weight
 
     def forward(self, x):
         return F.log_softmax(self.proj(x), dim=-1)
@@ -305,7 +308,7 @@ class PositionwiseFeedForward(nn.Module):
         return self.w_2(self.dropout(F.relu(self.w_1(x))))
 
 class Embeddings(nn.Module):
-    def __init__(self, d_model, vocab):
+    def __init__(self, d_model, vocab, weight=None):
         super(Embeddings, self).__init__()
         self.lut = nn.Embedding(vocab, d_model, padding_idx=0)
         self.d_model = d_model

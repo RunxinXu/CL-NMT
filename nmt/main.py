@@ -25,23 +25,23 @@ def get_argparse():
                         help="Output folder")
     
     # training
-    parser.add_argument("--batch_size", default=32, type=int,
+    parser.add_argument("--batch_size", default=64, type=int,
                         help="Batch size")
     parser.add_argument("--test_batch_size", default=128, type=int,
                         help="Batch size")
 #     parser.add_argument("--learning_rate", default=1e-3, type=float,
 #                         help="Batch size" )
-    parser.add_argument("--epochs", default=50, type=int,
+    parser.add_argument("--epochs", default=150, type=int,
                         help="Output folder")
-    parser.add_argument("--early_stop", default=5, type=int,
+    parser.add_argument("--early_stop", default=10, type=int,
                         help="Batch size" )
     
     # model
     parser.add_argument("--layers", default=4, type=int,
                         help="encoder & decoder layers")
-    parser.add_argument("--d_model", default=256, type=int,
+    parser.add_argument("--d_model", default=512, type=int,
                         help="d_model")
-    parser.add_argument("--d_ff", default=512, type=int,
+    parser.add_argument("--d_ff", default=2048, type=int,
                         help="d_ff")
     parser.add_argument("--heads", default=4, type=int,
                         help="heads")
@@ -53,7 +53,7 @@ def get_argparse():
 def train(train_dataloader, dev_dataloader, model, args, writer, trg_sp):
     model.train()
     my_optimizer = get_std_opt(model)
-    criterion = nn.CrossEntropyLoss(ignore_index=0, reduction='sum')
+    criterion = nn.CrossEntropyLoss(ignore_index=0, reduction='mean')
     global_step = 0
     best_bleu = -1
     eary_stop = args.early_stop
@@ -72,21 +72,22 @@ def train(train_dataloader, dev_dataloader, model, args, writer, trg_sp):
             loss.backward()
             my_optimizer.step()
             global_step += 1
-            
-        model.eval()
-        r = test(dev_dataloader, model, args, trg_sp)
-        model.train()
         
-        bleu = r['bleu']
-        if bleu > best_bleu:
-            best_bleu = bleu
-            early_stop = args.early_stop
-        else:
-            early_stop -= 1
-        writer.add_scalar('Dev/BLEU', bleu, epoch)
+        if epoch != 0 and epoch % 4 == 0:
+            model.eval()
+            r = test(dev_dataloader, model, args, trg_sp)
+            model.train()
         
-        if early_stop == 0:
-            break
+            bleu = r['bleu']
+            if bleu > best_bleu:
+                best_bleu = bleu
+                early_stop = args.early_stop
+            else:
+                early_stop -= 1
+            writer.add_scalar('Dev/BLEU', bleu, epoch)
+
+            if early_stop == 0:
+                break
 
 def test(test_dataloader, model, args, trg_sp):
     result = {}
@@ -150,7 +151,7 @@ if __name__ == '__main__':
     train_dataset = NMTDataset(os.path.join(args.data, 'train.en'), os.path.join(args.data, 'train.zh'), src_sp, trg_sp)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
     dev_dataset = NMTDataset(os.path.join(args.data, 'dev.en'), os.path.join(args.data, 'dev.zh'), src_sp, trg_sp)
-    dev_dataset.data = dev_dataset.data[:3000]
+    dev_dataset.data = dev_dataset.data[:5000]
     dev_dataloader = DataLoader(dev_dataset, batch_size=args.test_batch_size, shuffle=False, collate_fn=collate_fn)
     test_dataset = NMTDataset(os.path.join(args.data, 'test.en'), os.path.join(args.data, 'test.zh'), src_sp, trg_sp)
     test_dataloader = DataLoader(test_dataset, batch_size=args.test_batch_size, shuffle=False, collate_fn=collate_fn)
