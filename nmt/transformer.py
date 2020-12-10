@@ -94,6 +94,7 @@ class EncoderDecoder(nn.Module):
             cache_dict['layer_{}_key'.format(i)] = []
             cache_dict['layer_{}_value'.format(i)] = []
         
+        # No Cache
 #         for step in range(max_decode_length):
 #             tgt_mask = subsequent_mask(trg_input.size(1)).expand(bsz, -1, -1).cuda()
 #             output = self.decoder(trg_input, memory, src_mask, tgt_mask)[:, -1, :] # bsz * dim
@@ -112,6 +113,7 @@ class EncoderDecoder(nn.Module):
             
 #             if finish_count == bsz:
 #                 break
+        # Cache
         for step in range(max_decode_length):
             # bsz * dim
             output, cache_dict = self.decoder(trg_input, memory, src_mask, tgt_mask=None, cache_dict=cache_dict)
@@ -188,7 +190,11 @@ class SublayerConnection(nn.Module):
 
     def forward(self, x, sublayer):
         "Apply residual connection to any sublayer with the same size."
-        return x + self.dropout(sublayer(self.norm(x)))
+        y = sublayer(self.norm(x))
+        if isinstance(y, tuple):
+            return x + self.dropout(y[0]), *(y[1:])
+        else:
+            return x + self.dropout(y)
 
 class EncoderLayer(nn.Module):
     "Encoder is made up of self-attn and feed forward (defined below)"
@@ -222,15 +228,7 @@ class DecoderLayer(nn.Module):
             return self.sublayer[2](x, self.feed_forward)
         else:
             m = memory
-            new_key = self.self_attn.linears[1](x)
-            new_value = self.self_attn.linears[2](x)
-            if cache_key != []:
-                cache_key = torch.cat((cache_key, new_key), dim=1)
-                cache_value = torch.cat((cache_value, new_value), dim=1)
-            else:
-                cache_key = new_key
-                cache_value = new_value
-            x = self.sublayer[0](x, lambda x: self.self_attn.cache_forward(x, cache_key, cache_value))
+            x, cache_key, cache_value = self.sublayer[0](x, lambda x: self.self_attn.cache_forward(x, cache_key, cache_value))
             x = self.sublayer[1](x, lambda x: self.src_attn(x, m, m, src_mask))
             return self.sublayer[2](x, self.feed_forward), cache_key, cache_value
     
@@ -270,7 +268,7 @@ class MultiHeadedAttention(nn.Module):
              .view(nbatches, -1, self.h * self.d_k)
         return self.linears[-1](x)
     
-    def cache_forward(self, query, cache_key, cache_value, mask=None):
+    def cache_forward(self, x, cache_key, cache_value, mask=None):
         "Implements Figure 2"
         # src_mask: bsz * 1 * src_seq_len
         # trg_mask: bsz * trg_seq_len * src_seq_len
@@ -278,12 +276,24 @@ class MultiHeadedAttention(nn.Module):
         if mask is not None:
             # Same mask applied to all h heads.
             mask = mask.unsqueeze(1)
-        nbatches = query.size(0)
-        
-        new_query = self.linears[0](query)
+        nbatches = x.size(0)
         
         # 1) Do all the linear projections in batch from d_model => h x d_k 
-        query = new_query.view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
+        query = self.linears[0](x)
+        key = self.linears[1](x)
+        value = self.linears[2](x)
+        if cache_key != []:
+            cache_key = torch.cat((cache_key, key), dim=1)
+            cache_value = torch.cat((cache_value, value), dim=1)
+        else:
+            cache_key = key
+            cache_value = value
+        
+        query, key, value = \
+            [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
+             for l, x in zip(self.linears, (x, x, x))]
+        
+        query = query.view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
         key = cache_key.view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
         value = cache_value.view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
         
@@ -294,7 +304,7 @@ class MultiHeadedAttention(nn.Module):
         # 3) "Concat" using a view and apply a final linear. 
         x = x.transpose(1, 2).contiguous() \
              .view(nbatches, -1, self.h * self.d_k)
-        return self.linears[-1](x)
+        return self.linears[-1](x), cache_key, cache_value
     
 class PositionwiseFeedForward(nn.Module):
     "Implements FFN equation."

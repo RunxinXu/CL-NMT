@@ -65,6 +65,9 @@ def train(train_dataloader, dev_dataloader, model, args, writer, trg_sp):
     global_step = 0
     best_bleu = -1
     eary_stop = args.early_stop
+    model.eval()
+    r = test(dev_dataloader, model, args, trg_sp)
+    model.train()
     for epoch in range(args.epochs):
         for batch in tqdm(train_dataloader):
             src = batch['src'].cuda() # bsz * src_seq_len
@@ -90,6 +93,7 @@ def train(train_dataloader, dev_dataloader, model, args, writer, trg_sp):
         if bleu > best_bleu:
             best_bleu = bleu
             early_stop = args.early_stop
+            torch.save(model.state_dict(), os.path.join(args.output_dir, 'best.pth'))
         else:
             early_stop -= 1
         writer.add_scalar('Dev/BLEU', bleu, epoch)
@@ -192,13 +196,13 @@ if __name__ == '__main__':
     train_dataset = NMTDataset(os.path.join(args.data, 'train.en'), os.path.join(args.data, 'train.zh'), src_sp, trg_sp)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
     dev_dataset = NMTDataset(os.path.join(args.data, 'dev.en'), os.path.join(args.data, 'dev.zh'), src_sp, trg_sp)
-    #dev_dataset.data = dev_dataset.data[:5000]
     dev_dataloader = DataLoader(dev_dataset, batch_size=args.test_batch_size, shuffle=False, collate_fn=collate_fn)
     test_dataset = NMTDataset(os.path.join(args.data, 'test.en'), os.path.join(args.data, 'test.zh'), src_sp, trg_sp)
     test_dataloader = DataLoader(test_dataset, batch_size=args.test_batch_size, shuffle=False, collate_fn=collate_fn)
     
-    model = make_model(src_vocab=train_dataset.src_vocabs_size, tgt_vocab=train_dataset.trg_vocabs_size, N=args.layers, 
+    model = make_model(src_vocab=dev_dataset.src_vocabs_size, tgt_vocab=dev_dataset.trg_vocabs_size, N=args.layers, 
                d_model=args.d_model, d_ff=args.d_ff, h=args.heads, dropout=args.dropout)
+    model.load_state_dict(torch.load(os.path.join(args.output_dir, 'best.pth')))
     model = model.cuda()
     print('total #parameters: {}'.format(sum(p.numel() for p in model.parameters())))
     writer = SummaryWriter(args.output_dir)
