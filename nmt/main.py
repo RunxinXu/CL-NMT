@@ -65,9 +65,6 @@ def train(train_dataloader, dev_dataloader, model, args, writer, trg_sp):
     global_step = 0
     best_bleu = -1
     eary_stop = args.early_stop
-    model.eval()
-    r = test(dev_dataloader, model, args, trg_sp)
-    model.train()
     for epoch in range(args.epochs):
         for batch in tqdm(train_dataloader):
             src = batch['src'].cuda() # bsz * src_seq_len
@@ -202,7 +199,6 @@ if __name__ == '__main__':
     
     model = make_model(src_vocab=dev_dataset.src_vocabs_size, tgt_vocab=dev_dataset.trg_vocabs_size, N=args.layers, 
                d_model=args.d_model, d_ff=args.d_ff, h=args.heads, dropout=args.dropout)
-    model.load_state_dict(torch.load(os.path.join(args.output_dir, 'best.pth')))
     model = model.cuda()
     print('total #parameters: {}'.format(sum(p.numel() for p in model.parameters())))
     writer = SummaryWriter(args.output_dir)
