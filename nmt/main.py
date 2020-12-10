@@ -10,6 +10,11 @@ from tensorboardX import SummaryWriter
 import sentencepiece as spm
 import os
 import sacrebleu
+import torch.nn.functional as F
+
+# TODO: 
+# joint vocabulary?
+# beam search?
 
 def get_argparse():
     parser = argparse.ArgumentParser()
@@ -25,7 +30,7 @@ def get_argparse():
                         help="Output folder")
     
     # training
-    parser.add_argument("--batch_size", default=64, type=int,
+    parser.add_argument("--batch_size", default=32, type=int,
                         help="Batch size")
     parser.add_argument("--test_batch_size", default=128, type=int,
                         help="Batch size")
@@ -39,21 +44,24 @@ def get_argparse():
     # model
     parser.add_argument("--layers", default=4, type=int,
                         help="encoder & decoder layers")
-    parser.add_argument("--d_model", default=512, type=int,
+    parser.add_argument("--d_model", default=256, type=int,
                         help="d_model")
-    parser.add_argument("--d_ff", default=2048, type=int,
+    parser.add_argument("--d_ff", default=1024, type=int,
                         help="d_ff")
     parser.add_argument("--heads", default=4, type=int,
                         help="heads")
     parser.add_argument("--dropout", default=0.1, type=float,
                         help="dropout")
     
+    # criterion
+    parser.add_argument("--label_smooth", default=0.1, type=float,
+                        help="dropout")
     return parser
 
 def train(train_dataloader, dev_dataloader, model, args, writer, trg_sp):
     model.train()
     my_optimizer = get_std_opt(model)
-    criterion = nn.CrossEntropyLoss(ignore_index=0, reduction='mean')
+    criterion = LabelSmoothingLoss(label_smoothing=args.label_smoothing, ignore_index=0, tgt_vocab_size=model.tgt_embed.vocab)
     global_step = 0
     best_bleu = -1
     eary_stop = args.early_stop
@@ -73,21 +81,21 @@ def train(train_dataloader, dev_dataloader, model, args, writer, trg_sp):
             my_optimizer.step()
             global_step += 1
         
-        if epoch != 0 and epoch % 4 == 0:
-            model.eval()
-            r = test(dev_dataloader, model, args, trg_sp)
-            model.train()
         
-            bleu = r['bleu']
-            if bleu > best_bleu:
-                best_bleu = bleu
-                early_stop = args.early_stop
-            else:
-                early_stop -= 1
-            writer.add_scalar('Dev/BLEU', bleu, epoch)
+        model.eval()
+        r = test(dev_dataloader, model, args, trg_sp)
+        model.train()
+        
+        bleu = r['bleu']
+        if bleu > best_bleu:
+            best_bleu = bleu
+            early_stop = args.early_stop
+        else:
+            early_stop -= 1
+        writer.add_scalar('Dev/BLEU', bleu, epoch)
 
-            if early_stop == 0:
-                break
+        if early_stop == 0:
+            break
 
 def test(test_dataloader, model, args, trg_sp):
     result = {}
@@ -109,6 +117,8 @@ def test(test_dataloader, model, args, trg_sp):
     result['bleu'] = bleu.score
     return result
 
+
+# OPTIMIZER
 class NoamOpt:
     "Optim wrapper that implements rate."
     def __init__(self, model_size, factor, warmup, optimizer):
@@ -139,6 +149,37 @@ class NoamOpt:
 def get_std_opt(model):
     return NoamOpt(model.src_embed[0].d_model, 2, 4000,
             torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+
+
+# LABEL SMOOTHING
+class LabelSmoothingLoss(nn.Module):
+    """
+    With label smoothing,
+    KL-divergence between q_{smoothed ground truth prob.}(w)
+    and p_{prob. computed by model}(w) is minimized.
+    """
+    def __init__(self, label_smoothing, tgt_vocab_size, ignore_index=-100):
+        assert 0.0 < label_smoothing <= 1.0
+        self.ignore_index = ignore_index
+        super(LabelSmoothingLoss, self).__init__()
+
+        smoothing_value = label_smoothing / (tgt_vocab_size - 2)
+        one_hot = torch.full((tgt_vocab_size,), smoothing_value)
+        one_hot[self.ignore_index] = 0
+        self.register_buffer('one_hot', one_hot.unsqueeze(0))
+
+        self.confidence = 1.0 - label_smoothing
+
+    def forward(self, output, target):
+        """
+        output (FloatTensor): batch_size x n_classes
+        target (LongTensor): batch_size
+        """
+        model_prob = self.one_hot.repeat(target.size(0), 1)
+        model_prob.scatter_(1, target.unsqueeze(1), self.confidence)
+        model_prob.masked_fill_((target == self.ignore_index).unsqueeze(1), 0)
+
+        return F.kl_div(output, model_prob, reduction='sum')
             
 if __name__ == '__main__':
     args = get_argparse().parse_args()
@@ -151,7 +192,7 @@ if __name__ == '__main__':
     train_dataset = NMTDataset(os.path.join(args.data, 'train.en'), os.path.join(args.data, 'train.zh'), src_sp, trg_sp)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
     dev_dataset = NMTDataset(os.path.join(args.data, 'dev.en'), os.path.join(args.data, 'dev.zh'), src_sp, trg_sp)
-    dev_dataset.data = dev_dataset.data[:5000]
+    #dev_dataset.data = dev_dataset.data[:5000]
     dev_dataloader = DataLoader(dev_dataset, batch_size=args.test_batch_size, shuffle=False, collate_fn=collate_fn)
     test_dataset = NMTDataset(os.path.join(args.data, 'test.en'), os.path.join(args.data, 'test.zh'), src_sp, trg_sp)
     test_dataloader = DataLoader(test_dataset, batch_size=args.test_batch_size, shuffle=False, collate_fn=collate_fn)

@@ -310,6 +310,7 @@ class PositionwiseFeedForward(nn.Module):
 class Embeddings(nn.Module):
     def __init__(self, d_model, vocab, weight=None):
         super(Embeddings, self).__init__()
+        self.vocab = vocab
         self.lut = nn.Embedding(vocab, d_model, padding_idx=0)
         self.d_model = d_model
 
