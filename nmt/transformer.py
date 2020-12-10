@@ -94,31 +94,13 @@ class EncoderDecoder(nn.Module):
             cache_dict['layer_{}_key'.format(i)] = []
             cache_dict['layer_{}_value'.format(i)] = []
         
-        for step in range(max_decode_length):
-            tgt_mask = subsequent_mask(trg_input.size(1)).expand(bsz, -1, -1).cuda()
-            output = self.decoder(trg_input, memory, src_mask, tgt_mask)[:, -1, :] # bsz * dim
-            logits = self.generator(output) # bsz * vocab
-            prediction = torch.argmax(logits, dim=-1) # bsz
-            new_trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
-            trg_input = torch.cat((trg_input, new_trg_input), dim=1)
-            prediction = prediction.cpu().numpy()
-            for i in range(bsz):
-                if not exit_flag[i]:
-                    if prediction[i] == EOS:
-                        finish_count += 1
-                        exit_flag[i] = True
-                    else:
-                        results[i].append(prediction[i].item())
-            
-            if finish_count == bsz:
-                break
 #         for step in range(max_decode_length):
-#             # bsz * dim
-#             output, cache_dict = self.decoder(trg_input, memory, src_mask, tgt_mask=None, cache_dict=cache_dict)
-#             output = output[:, 0, :] 
+#             tgt_mask = subsequent_mask(trg_input.size(1)).expand(bsz, -1, -1).cuda()
+#             output = self.decoder(trg_input, memory, src_mask, tgt_mask)[:, -1, :] # bsz * dim
 #             logits = self.generator(output) # bsz * vocab
 #             prediction = torch.argmax(logits, dim=-1) # bsz
-#             trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
+#             new_trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
+#             trg_input = torch.cat((trg_input, new_trg_input), dim=1)
 #             prediction = prediction.cpu().numpy()
 #             for i in range(bsz):
 #                 if not exit_flag[i]:
@@ -130,6 +112,24 @@ class EncoderDecoder(nn.Module):
             
 #             if finish_count == bsz:
 #                 break
+        for step in range(max_decode_length):
+            # bsz * dim
+            output, cache_dict = self.decoder(trg_input, memory, src_mask, tgt_mask=None, cache_dict=cache_dict)
+            output = output[:, 0, :] 
+            logits = self.generator(output) # bsz * vocab
+            prediction = torch.argmax(logits, dim=-1) # bsz
+            trg_input = self.tgt_embed(prediction.unsqueeze(1)) # bsz * 1 * dim
+            prediction = prediction.cpu().numpy()
+            for i in range(bsz):
+                if not exit_flag[i]:
+                    if prediction[i] == EOS:
+                        finish_count += 1
+                        exit_flag[i] = True
+                    else:
+                        results[i].append(prediction[i].item())
+            
+            if finish_count == bsz:
+                break
                 
         return results
                 
@@ -310,7 +310,6 @@ class PositionwiseFeedForward(nn.Module):
 class Embeddings(nn.Module):
     def __init__(self, d_model, vocab, weight=None):
         super(Embeddings, self).__init__()
-        self.vocab = vocab
         self.lut = nn.Embedding(vocab, d_model, padding_idx=0)
         self.d_model = d_model
 

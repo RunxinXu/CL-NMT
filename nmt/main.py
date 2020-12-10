@@ -54,14 +54,14 @@ def get_argparse():
                         help="dropout")
     
     # criterion
-    parser.add_argument("--label_smooth", default=0.1, type=float,
+    parser.add_argument("--label_smoothing", default=0.1, type=float,
                         help="dropout")
     return parser
 
 def train(train_dataloader, dev_dataloader, model, args, writer, trg_sp):
     model.train()
     my_optimizer = get_std_opt(model)
-    criterion = LabelSmoothingLoss(label_smoothing=args.label_smoothing, ignore_index=0, tgt_vocab_size=model.tgt_embed.vocab)
+    criterion = LabelSmoothingLoss(label_smoothing=args.label_smoothing, ignore_index=0, tgt_vocab_size=model.generator.proj.weight.size(0)).cuda()
     global_step = 0
     best_bleu = -1
     eary_stop = args.early_stop
@@ -203,4 +203,4 @@ if __name__ == '__main__':
     print('total #parameters: {}'.format(sum(p.numel() for p in model.parameters())))
     writer = SummaryWriter(args.output_dir)
     
-    train(train_dataloader, dev_dataloader, model, args, writer, trg_sp)
+    train(train_dataloader, test_dataloader, model, args, writer, trg_sp)
